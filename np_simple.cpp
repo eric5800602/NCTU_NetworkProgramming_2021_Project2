@@ -20,7 +20,7 @@ int main(int argc,char const *argv[]){
 		perror("socket failed");
 		exit(EXIT_FAILURE);
 	}
-	//reset server memory
+	//reset server socket memory
 	bzero((char *) &address, sizeof(address));
 	//set address env
 	address.sin_family = AF_INET;
