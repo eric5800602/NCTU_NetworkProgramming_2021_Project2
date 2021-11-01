@@ -47,9 +47,12 @@ int main(int argc, char *argv[])
     while (1)
     {
         memcpy(&rfds, &afds, sizeof(rfds));
-
-        if (select(nfds, &rfds, (fd_set *)0, (fd_set *)0,
-                   (struct timeval *)0) < 0)
+        int err,stat;
+        do{
+            stat = select(nfds, &rfds, (fd_set *)0, (fd_set *)0, (struct timeval *)0);
+            if( stat< 0) err = errno;
+        } while ((stat < 0) && (err == EINTR)); /* blocked by pipe or other reason */
+        if (stat < 0)
             perror("select fail");
         if (FD_ISSET(msock, &rfds))
         {
@@ -73,7 +76,9 @@ int main(int argc, char *argv[])
             welcome(ssock);
             /* create user info */
             string tmp(ip);
-            client c = {ID, tmp, "no name", ssock};
+            vector<npipe> np;
+            np.clear();
+            client c = {ID, tmp, "no name", ssock,np};
             client_info.push_back(c);
             sort(client_info.begin(), client_info.end(), sortid);
             /* broadcast login information */
@@ -124,6 +129,10 @@ int openshell(int fd)
     bzero((char *)buf, BUFSIZE);
     int cc;
     cc = recv(fd, buf, BUFSIZE, 0);
+    if (cc == 0)
+        cout << "socket: " << fd << "closed" << endl;
+    else if(cc < 0)
+        perror("receive error");
     buf[cc] = '\0';
     string input(buf);
     dup2(fd, STDOUT_FILENO);

@@ -33,8 +33,11 @@ struct client{
     string ip;
     string nickname;
 	int fd;
+	/* used to store numberpipe */
+	vector<npipe> numberpipe_vector;
 };
 
+/* used to store user information */
 vector<client> client_info;
 int msock;               /* master server socket	*/
 fd_set rfds;             /* read file descriptor set	*/
@@ -114,9 +117,6 @@ void DeleteClient(int fd){
 class Shell
 {
     private:
-        //used to store numberpipe
-        vector<npipe> numberpipe_vector;
-
         //used to store pipe
         vector<npipe> pipe_vector;
     public:
@@ -131,7 +131,7 @@ class Shell
         int CheckPIPE(string,int);
         void CreatePipe(int,int,int);
         bool isWhitespace(string);
-        int ParseCMD(vector<string>);
+        int ParseCMD(vector<string>,int);
         int EXECCMD(vector<string>);
         int EXEC(string,int);
 };
@@ -257,7 +257,7 @@ int Shell::CheckPIPE(string input,int fd){
 	}
 	if(CheckBuiltIn(&input,fd) == -1) exit_sig = true;
 	cmds.push_back(input);
-	ParseCMD(cmds);
+	ParseCMD(cmds,fd);
 	if(exit_sig) return -1;
 	return 0;
 }
@@ -275,9 +275,14 @@ bool Shell::isWhitespace(string s){
     return true;
 }
 
-int Shell::ParseCMD(vector<string> input){
+int Shell::ParseCMD(vector<string> input,int fd){
 	size_t pos = 0;
 	bool has_numberpipe = false,has_errpipe = false;
+	client *c;
+	for(int i = 0;i < client_info.size();i++){
+		c = &client_info[i];
+		if(c->fd == fd) break;
+	}
 	string numpipe_delim = "|";
 	string errpipe_delim = "!";
 	for(int i = 0;i < input.size();++i){
@@ -291,18 +296,18 @@ int Shell::ParseCMD(vector<string> input){
 			if((pos = cmd.find(errpipe_delim)) != string::npos){
 				int numberpipe[2];
 				int tmpnum = atoi(cmd.erase(0,pos+numpipe_delim.length()).c_str());
-				for(int j = 0;j < numberpipe_vector.size();++j){
-					if(tmpnum == numberpipe_vector[j].num){
-						numberpipe[0] = numberpipe_vector[j].in;
-						numberpipe[1] = numberpipe_vector[j].out;
+				for(int j = 0;j < c->numberpipe_vector.size();++j){
+					if(tmpnum == c->numberpipe_vector[j].num){
+						numberpipe[0] = c->numberpipe_vector[j].in;
+						numberpipe[1] = c->numberpipe_vector[j].out;
 					}
 					else{
 						pipe(numberpipe);
 					}
 				}
-				if(numberpipe_vector.size() == 0) pipe(numberpipe);
+				if(c->numberpipe_vector.size() == 0) pipe(numberpipe);
 				npipe np = {numberpipe[0],numberpipe[1],tmpnum};
-				numberpipe_vector.push_back(np);
+				c->numberpipe_vector.push_back(np);
 				has_errpipe = true;
 				continue;
 			}
@@ -311,18 +316,18 @@ int Shell::ParseCMD(vector<string> input){
 			if((pos = cmd.find(numpipe_delim)) != string::npos){
 				int numberpipe[2];
 				int tmpnum = atoi(cmd.erase(0,pos+numpipe_delim.length()).c_str());
-				for(int j = 0;j < numberpipe_vector.size();++j){
-					if(tmpnum == numberpipe_vector[j].num){
-						numberpipe[0] = numberpipe_vector[j].in;
-						numberpipe[1] = numberpipe_vector[j].out;
+				for(int j = 0;j < c->numberpipe_vector.size();++j){
+					if(tmpnum == c->numberpipe_vector[j].num){
+						numberpipe[0] = c->numberpipe_vector[j].in;
+						numberpipe[1] = c->numberpipe_vector[j].out;
 					}
 					else{
 						pipe(numberpipe);
 					}
 				}
-				if(numberpipe_vector.size() == 0) pipe(numberpipe);
+				if(c->numberpipe_vector.size() == 0) pipe(numberpipe);
 				npipe np = {numberpipe[0],numberpipe[1],tmpnum};
-				numberpipe_vector.push_back(np);
+				c->numberpipe_vector.push_back(np);
 				has_numberpipe = true;
 				continue;
 			}
@@ -333,7 +338,6 @@ int Shell::ParseCMD(vector<string> input){
 			pipe(pipes);
 			CreatePipe(pipes[0],pipes[1],i);
 		}
-
 		signal(SIGCHLD, HandleChild);
 		pid_t cpid;
 		int status;
@@ -352,13 +356,13 @@ int Shell::ParseCMD(vector<string> input){
 				close(pipe_vector[i-1].out);
 			}
 			//numberpipe reciever close
-			for(int j = 0;j < numberpipe_vector.size();++j){
-				numberpipe_vector[j].num--;
+			for(int j = 0;j < c->numberpipe_vector.size();++j){
+				c->numberpipe_vector[j].num--;
 				//numberpipe erase
-				if(numberpipe_vector[j].num < 0){
-					close(numberpipe_vector[j].in);
-					close(numberpipe_vector[j].out);	
-					numberpipe_vector.erase(numberpipe_vector.begin() + j);
+				if(c->numberpipe_vector[j].num < 0){
+					close(c->numberpipe_vector[j].in);
+					close(c->numberpipe_vector[j].out);	
+					c->numberpipe_vector.erase(c->numberpipe_vector.begin() + j);
 					j--;
 				}
 			}
@@ -372,32 +376,32 @@ int Shell::ParseCMD(vector<string> input){
 			if(i == 0){
 				bool has_front_pipe = false;
 				int front_fd = 0;
-				for(int j = numberpipe_vector.size()-1;j >= 0;--j){
-					if(numberpipe_vector[j].num == 0){
-						if(has_front_pipe && front_fd != 0 && front_fd != numberpipe_vector[j].in){
+				for(int j = c->numberpipe_vector.size()-1;j >= 0;--j){
+					if(c->numberpipe_vector[j].num == 0){
+						if(has_front_pipe && front_fd != 0 && front_fd != c->numberpipe_vector[j].in){
 							fcntl(front_fd, F_SETFL, O_NONBLOCK);
 							while (1) {
 								char tmp;
 								if (read(front_fd, &tmp, 1) < 1){
 									break;
 								}
-								int rt = write(numberpipe_vector[j].out,&tmp,1);
+								int rt = write(c->numberpipe_vector[j].out,&tmp,1);
 
 							}
 							has_front_pipe = false;
-							dup2(numberpipe_vector[j].in,STDIN_FILENO);
+							dup2(c->numberpipe_vector[j].in,STDIN_FILENO);
 						}
 						else{
-							dup2(numberpipe_vector[j].in,STDIN_FILENO);
-							front_fd = numberpipe_vector[j].in;
+							dup2(c->numberpipe_vector[j].in,STDIN_FILENO);
+							front_fd = c->numberpipe_vector[j].in;
 							has_front_pipe = true;
 						}
 					}
 				}
-				for(int j = 0;j < numberpipe_vector.size();++j)	{
-					if(numberpipe_vector[j].num == 0){
-						close(numberpipe_vector[j].in);
-						close(numberpipe_vector[j].out);
+				for(int j = 0;j < c->numberpipe_vector.size();++j)	{
+					if(c->numberpipe_vector[j].num == 0){
+						close(c->numberpipe_vector[j].in);
+						close(c->numberpipe_vector[j].out);
 					}
 				}
 			}
@@ -410,15 +414,15 @@ int Shell::ParseCMD(vector<string> input){
 			}
 			//numberpipe send
 			if(i == input.size()-1 && has_numberpipe){
-				dup2(numberpipe_vector[numberpipe_vector.size()-1].out,STDOUT_FILENO);
-				close(numberpipe_vector[numberpipe_vector.size()-1].in);
-				close(numberpipe_vector[numberpipe_vector.size()-1].out);
+				dup2(c->numberpipe_vector[c->numberpipe_vector.size()-1].out,STDOUT_FILENO);
+				close(c->numberpipe_vector[c->numberpipe_vector.size()-1].in);
+				close(c->numberpipe_vector[c->numberpipe_vector.size()-1].out);
 			}
 			if(i == input.size()-1 && has_errpipe){
-				dup2(numberpipe_vector[numberpipe_vector.size()-1].out,STDERR_FILENO);
-				dup2(numberpipe_vector[numberpipe_vector.size()-1].out,STDOUT_FILENO);
-				close(numberpipe_vector[numberpipe_vector.size()-1].in);
-				close(numberpipe_vector[numberpipe_vector.size()-1].out);
+				dup2(c->numberpipe_vector[c->numberpipe_vector.size()-1].out,STDERR_FILENO);
+				dup2(c->numberpipe_vector[c->numberpipe_vector.size()-1].out,STDOUT_FILENO);
+				close(c->numberpipe_vector[c->numberpipe_vector.size()-1].in);
+				close(c->numberpipe_vector[c->numberpipe_vector.size()-1].out);
 			}
 			for(int j = 0;j < pipe_vector.size();j++){
 				close(pipe_vector[j].in);
