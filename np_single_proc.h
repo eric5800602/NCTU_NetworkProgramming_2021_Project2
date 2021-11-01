@@ -29,6 +29,14 @@ struct npipe{
 	int num;
 };
 
+struct userpipe{
+	int in;
+	int out;
+	int send_id;
+	int recv_id;
+	bool used;
+};
+
 struct client{
     int ID;
     string ip;
@@ -42,6 +50,9 @@ struct client{
 
 /* used to store user information */
 vector<client> client_info;
+/* userd to store user pipe information */
+vector<userpipe> up_vector;
+
 int msock;               /* master server socket	*/
 fd_set rfds;             /* read file descriptor set	*/
 fd_set afds;             /* active file descriptor set */
@@ -62,14 +73,19 @@ void broadcast(int type,string msg,client *cnt,int tarfd){
 	char buf[BUFSIZE];
     bzero((char *)&buf, BUFSIZE);
 	client c = *cnt;
+	client *tar;
 	switch(type){
 		case 0:
 			/* Login */
-			sprintf(buf, "*** User ’(no name)’ entered from %s. ***\n", c.ip.c_str());
+			sprintf(buf, "*** User '(no name)' entered from %s. ***\n", c.ip.c_str());
 			break;
 		case 1:
 			/* Change name */
-			sprintf(buf,"*** User from %s is named ’%s’. ***\n",c.ip.c_str(),msg.c_str());
+			if(tarfd == -1){
+				sprintf(buf,"*** User '%s' already exists. ***\n",msg.c_str());
+			}else{
+				sprintf(buf,"*** User from %s is named '%s'. ***\n",c.ip.c_str(),msg.c_str());
+			}
 			break;
 		case 2:
 			/* Yell with msg */
@@ -89,7 +105,33 @@ void broadcast(int type,string msg,client *cnt,int tarfd){
 			break;
 		case 4:
 			/* Logout */
-			sprintf(buf,"*** User ’%s’ left. ***\n",c.nickname.c_str());
+			sprintf(buf,"*** User '%s' left. ***\n",c.nickname.c_str());
+			break;
+		case 5:
+			/* send user pipe information */
+			/* Success to send userpipe */
+			for(int i = 0;i < client_info.size();i++){
+				tar = &client_info[i];
+				if(tar->ID == tarfd){
+					/* tarfd is ID*/
+					break;
+				}
+			}
+			sprintf(buf,"*** %s (#%d) just piped '%s' to <%s> (#%d) ***\n",
+			c.nickname.c_str(),c.ID,msg.c_str(),tar->nickname.c_str(),tar->ID);
+			break;
+		case 6:
+			/* recv user pipe information */
+			/* Success to send userpipe */
+			for(int i = 0;i < client_info.size();i++){
+				tar = &client_info[i];
+				if(tar->ID == tarfd){
+					/* tarfd is ID*/
+					break;
+				}
+			}
+			sprintf(buf,"*** %s (#%d) just received from %s (#%d) by '%s' ***\n",
+			c.nickname.c_str(),c.ID,tar->nickname.c_str(),tar->ID,msg.c_str());
 			break;
 		default:
 			perror("unknown brroadcast type");
@@ -108,11 +150,22 @@ void broadcast(int type,string msg,client *cnt,int tarfd){
 }
 
 void DeleteClient(int fd){
+	client *c;
+	int id;
 	for(int i = 0;i < client_info.size();i++){
-		client c = client_info[i];
-		if(c.fd == fd){
+		c = &client_info[i];
+		if(c->fd == fd){
+			ID_arr[c->ID-1] = 0;
+			id = c->ID;
 			client_info.erase(client_info.begin()+i);
-			ID_arr[c.ID-1] = 0;
+			break;
+		}
+	}
+	for(int i = 0;i < up_vector.size();++i){
+		if(up_vector[i].send_id == id || up_vector[i].recv_id == id){
+			close(up_vector[i].in);
+			close(up_vector[i].out);
+			up_vector.erase(up_vector.begin()+i);
 		}
 	}
 }
@@ -122,6 +175,7 @@ class Shell
     private:
         //used to store pipe
         vector<npipe> pipe_vector;
+		string original_input;
     public:
         static void HandleChild(int);
         void SETENV(string, string,int);
@@ -189,9 +243,17 @@ void Shell::WHO(int fd){
 void Shell::NAME(int fd,string name){
 	for(int i = 0;i < client_info.size();i++){
 		client *c = &client_info[i];
+		if(c->nickname == name){
+			broadcast(1,name,c,-1);
+			return;
+		}
+	}
+	for(int i = 0;i < client_info.size();i++){
+		client *c = &client_info[i];
 		if(c->fd == fd){
 			c->nickname = name;
 			broadcast(1,name,c,0);
+			break;
 		}
 	}
 }
@@ -226,14 +288,14 @@ int Shell::CheckBuiltIn(string *input,int fd){
 	string cmd;
 	getline(iss,cmd,' ');
 	if(cmd == "printenv"){
-		getline(iss,cmd,' ');
+		getline(iss,cmd);
 		cout << PRINTENV(cmd,fd) << endl;
 		*input = "";
 		return 1;
 	}else if(cmd == "setenv"){
 		string name,val;
 		getline(iss,name,' ');
-		getline(iss,val,' ');
+		getline(iss,val);
 		SETENV(name,val,fd);
 		*input = "";
 		return 1;
@@ -252,14 +314,14 @@ int Shell::CheckBuiltIn(string *input,int fd){
 		return 1;
 	}else if(cmd == "yell"){
 		string msg;
-		getline(iss,msg,' ');
+		getline(iss,msg);
 		YELL(fd,msg);
 		*input = "";
 		return 1;
 	}else if(cmd == "tell"){
 		string msg,tmp;
 		getline(iss,tmp,' ');
-		getline(iss,msg,' ');
+		getline(iss,msg);
 		//cerr << stoi(tmp) << endl;
 		TELL(fd,msg,stoi(tmp));
 		*input = "";
@@ -306,10 +368,16 @@ int Shell::ParseCMD(vector<string> input,int fd){
 	}
 	string numpipe_delim = "|";
 	string errpipe_delim = "!";
+	string user_recvpipe_delim = "<";
+	string user_sendpipe_delim = ">";
+	/* main loop */
 	for(int i = 0;i < input.size();++i){
 		string cmd;
 		istringstream iss(input[i]);
 		vector<string> parm;
+		bool has_user_sendpipe = false,has_user_recvpipe = false,dup_userpipe = false,recv_userpipe = false;
+		int user_send_idx = 0,user_recv_idx = 0;
+		int err_send_id = -1,err_recv_id = -1;
 		// Create pipe for number pipe, last one is for number
 		while(getline(iss,cmd,' ')){
 			if(isWhitespace(cmd)) continue;
@@ -321,6 +389,7 @@ int Shell::ParseCMD(vector<string> input,int fd){
 					if(tmpnum == c->numberpipe_vector[j].num){
 						numberpipe[0] = c->numberpipe_vector[j].in;
 						numberpipe[1] = c->numberpipe_vector[j].out;
+						//break;
 					}
 					else{
 						pipe(numberpipe);
@@ -341,6 +410,7 @@ int Shell::ParseCMD(vector<string> input,int fd){
 					if(tmpnum == c->numberpipe_vector[j].num){
 						numberpipe[0] = c->numberpipe_vector[j].in;
 						numberpipe[1] = c->numberpipe_vector[j].out;
+						//break;
 					}
 					else{
 						pipe(numberpipe);
@@ -352,7 +422,81 @@ int Shell::ParseCMD(vector<string> input,int fd){
 				has_numberpipe = true;
 				continue;
 			}
+			/* check user pipe (receive) exclude file redirection */
+			if((pos = cmd.find(user_recvpipe_delim)) != string::npos){
+				if(cmd.size() != 1){
+					int send_id = atoi(cmd.erase(0,pos+user_sendpipe_delim.length()).c_str());
+					if(send_id > 30 || ID_arr[send_id-1] == 0){
+						/* exceed max client number */
+						recv_userpipe = true;
+						err_recv_id = send_id;
+						continue;
+					}
+					for(int j = 0;j < up_vector.size();++j){
+						if(up_vector[j].recv_id == c->ID && up_vector[j].send_id == send_id && !up_vector[j].used){
+							/* had userpipe before */
+							user_recv_idx = j;
+							up_vector[j].used = true;
+							has_user_recvpipe = true;
+							broadcast(6,original_input,c,send_id);
+							break;
+						}
+					}
+					if(!has_user_recvpipe){
+						/* error msg */
+						recv_userpipe = true;
+						fprintf(stdout,"*** Error: the pipe #%d->#%d does not exist yet. ***\n",
+						send_id,c->ID);
+						fflush(stdout);
+					}
+					continue;
+				}
+			}
+			/* check user pipe (send) exclude file redirection */
+			if((pos = cmd.find(user_sendpipe_delim)) != string::npos){
+				/* exclude file redirection */
+				if(cmd.size() != 1){
+					int recv_id = atoi(cmd.erase(0,pos+user_sendpipe_delim.length()).c_str());
+					if(recv_id > 30 || ID_arr[recv_id-1] == 0){
+						/* exceed max client number */
+						dup_userpipe = true;
+						err_send_id = recv_id;
+						continue;
+					}
+					for(int j = 0;j < up_vector.size();++j){
+						if(up_vector[j].recv_id == recv_id && up_vector[j].send_id == c->ID && !up_vector[j].used){
+							/* had userpipe before */
+							dup_userpipe = true;
+							/* error msg */
+							fprintf(stdout,"*** Error: the pipe #%d->#%d already exists. ***\n",
+							c->ID,recv_id);
+							fflush(stdout);
+						}
+					}
+					if(!dup_userpipe){
+						/* hadn't userpipe */
+						int upipes[2];
+						pipe(upipes);
+						/* int in,int out,int send_id,int recv_id */ 
+						user_send_idx = up_vector.size();
+						userpipe tmpuserpipe = {upipes[0],upipes[1],c->ID,recv_id,false};
+						up_vector.push_back(tmpuserpipe);
+						has_user_sendpipe = true;
+						/* broadcast msg */
+						broadcast(5,original_input,c,recv_id);
+					}
+					continue;
+				}
+			}
 			parm.push_back(cmd);
+		}
+		if(err_recv_id != -1){
+			fprintf(stdout,"*** Error: user #%d does not exist yet. ***\n",err_recv_id);
+			fflush(stdout);
+		}
+		if(err_send_id != -1){
+			fprintf(stdout,"*** Error: user #%d does not exist yet. ***\n",err_send_id);
+			fflush(stdout);
 		}
 		if(i != input.size()-1 &&input.size() != 1){
 			int pipes[2];
@@ -387,7 +531,16 @@ int Shell::ParseCMD(vector<string> input,int fd){
 					j--;
 				}
 			}
-			if(i == input.size()-1 && !(has_numberpipe || has_errpipe)){
+			/* Checkout user pipe vector (parent)*/
+			for(int j = 0;j < up_vector.size();++j){
+				if(up_vector[j].used){
+					//cerr << "parent close " << up_vector[j].in << up_vector[j].out << endl;
+					close(up_vector[j].in);
+					close(up_vector[j].out);
+					up_vector.erase(up_vector.begin()+j);
+				}
+			}
+			if(i == input.size()-1 && !(has_numberpipe || has_errpipe )){
 				waitpid(cpid,&status,0);
 			}
 		}
@@ -449,8 +602,37 @@ int Shell::ParseCMD(vector<string> input,int fd){
 				close(pipe_vector[j].in);
 				close(pipe_vector[j].out);
 			}
+			/* Process user pipe */
+			/* Recv */
+			if(has_user_recvpipe){
+				dup2(up_vector[user_recv_idx].in,STDIN_FILENO);
+				close(up_vector[user_recv_idx].in);
+			}
+			/* Send */
+			if(has_user_sendpipe){
+				dup2(up_vector[user_send_idx].out,STDOUT_FILENO);
+				close(up_vector[user_send_idx].out);
+			}
+			/* send to null*/
+			if(dup_userpipe){
+				/* dev/null */
+				int devNull = open("/dev/null", O_RDWR);
+				dup2(devNull,STDOUT_FILENO);
+				close(devNull);
+			}
+			/* recv from null*/
+			if(recv_userpipe){
+				int devNull = open("/dev/null", O_RDWR);
+				dup2(devNull,STDIN_FILENO);
+				close(devNull);
+			}
+			/* Checkout user pipe vector (child)*/
+			for(int j = 0;j < up_vector.size();++j){
+				close(up_vector[j].in);
+				close(up_vector[j].out);
+			}
 			EXECCMD(parm,fd);
-		}	
+		}
 	}
 	//pipe_vector.clear();
 	return 0;
@@ -483,8 +665,10 @@ int Shell::EXECCMD(vector<string> parm,int client_fd){
 	if(execvp(parm[0].c_str(),(char **)argv) == -1){
 		//stderr for unknown command
 		if(parm[0] != "setenv" && parm[0] != "printenv" && parm[0] != "exit" &&
-		   parm[0] != "who" && parm[0] != "name" && parm[0] != "yell")
+		   parm[0] != "who" && parm[0] != "name" && parm[0] != "yell"){
 			fprintf(stderr,"Unknown command: [%s].\n",parm[0].c_str());
+			fflush(stdout);
+		   }
 		exit(0);
 		//seems useless
 		return -1;
@@ -494,17 +678,14 @@ int Shell::EXECCMD(vector<string> parm,int client_fd){
 
 int Shell::EXEC(string input,int fd){
 	if(input.empty() || isWhitespace(input)){
-		cout << "% ";
-		fflush(stdout);
 		return 0;
 	}
 	input.erase(remove(input.begin(), input.end(), '\n'),input.end());
 	input.erase(remove(input.begin(), input.end(), '\r'),input.end());
+	original_input = input;
 	if(CheckPIPE(input,fd)  == -1){
 		/* exit */
 		return -1;
 	}
-	cout << "% ";
-	fflush(stdout);
 	return 0;
 }

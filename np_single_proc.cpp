@@ -18,7 +18,12 @@ int passiveTCP(int qlen, int port)
     s = socket(PF_INET, SOCK_STREAM, 0);
     if (s < 0)
         perror("socket fail");
-
+    int optval = 1;
+	if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(int)) == -1) 
+    {
+		perror("Error: set socket failed");
+		return 0;
+	}
     /* Bind the socket */
     if (bind(s, (struct sockaddr *)&sin, sizeof(sin)) < 0)
         perror("bind fail");
@@ -108,9 +113,9 @@ int main(int argc, char *argv[])
                     }
                     broadcast(4, "", &c,0);
                     DeleteClient(fd);
+                    close(fd);
                     close(1);
                     close(2);
-                    close(fd);
                     dup2(0, 1);
                     dup2(0, 2);
                     FD_CLR(fd, &afds);
@@ -136,16 +141,21 @@ int openshell(int fd)
     bzero((char *)buf, BUFSIZE);
     int cc;
     cc = recv(fd, buf, BUFSIZE, 0);
-    if (cc == 0)
-        cout << "socket: " << fd << "closed" << endl;
-    else if(cc < 0)
-        perror("receive error");
+    if (cc == 0){
+        //cout << "socket: " << fd << "closed" << endl;
+        return -1;
+    }
+    else if(cc < 0){
+        //perror("receive error");
+        return -1;
+    }
     buf[cc] = '\0';
     string input(buf);
     dup2(fd, STDOUT_FILENO);
     dup2(fd, STDERR_FILENO);
     Shell s;
     int status = s.EXEC(input, fd);
+    send(fd, "% ", 2,0);
     return status;
     /*
     
