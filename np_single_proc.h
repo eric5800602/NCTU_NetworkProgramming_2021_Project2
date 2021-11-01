@@ -16,6 +16,7 @@
 #include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <map>
 #define QLEN 5
 #define BUFSIZE 4096
 #define CLIENTMAX 30
@@ -35,6 +36,8 @@ struct client{
 	int fd;
 	/* used to store numberpipe */
 	vector<npipe> numberpipe_vector;
+	/* used to sotre user env setting */
+	map<string, string> mapenv;
 };
 
 /* used to store user information */
@@ -121,8 +124,8 @@ class Shell
         vector<npipe> pipe_vector;
     public:
         static void HandleChild(int);
-        void SETENV(string, string);
-        void PRINTENV(string);
+        void SETENV(string, string,int);
+        string PRINTENV(string,int);
 		void WHO(int);
 		void NAME(int,string);
 		void YELL(int,string);
@@ -132,7 +135,7 @@ class Shell
         void CreatePipe(int,int,int);
         bool isWhitespace(string);
         int ParseCMD(vector<string>,int);
-        int EXECCMD(vector<string>);
+        int EXECCMD(vector<string>,int);
         int EXEC(string,int);
 };
 
@@ -142,13 +145,31 @@ void Shell::HandleChild(int sig){
 	};
 }
 
-void Shell::SETENV(string name,string val){
-	setenv(name.c_str(),val.c_str(),1);
+void Shell::SETENV(string name,string val,int fd){
+	client *c;
+	for(int i = 0;i < client_info.size();i++){
+		c = &client_info[i];
+		if(c->fd == fd){
+			c->mapenv[name] = val;
+			break;
+		}
+	}
+	//setenv(name.c_str(),val.c_str(),1);
 }
 
-void Shell::PRINTENV(string name){
-	char *val = getenv(name.c_str());
-	if(val) cout << val << endl;
+string Shell::PRINTENV(string name,int fd){
+	client *c;
+	for(int i = 0;i < client_info.size();i++){
+		c = &client_info[i];
+		if(c->fd == fd){
+			break;
+		}
+	}
+	auto it = c->mapenv.find(name); 
+	if (it != c->mapenv.end()) {
+		return it->second;
+    }
+	return  name + " not found!";
 }
 
 void Shell::WHO(int fd){
@@ -206,14 +227,14 @@ int Shell::CheckBuiltIn(string *input,int fd){
 	getline(iss,cmd,' ');
 	if(cmd == "printenv"){
 		getline(iss,cmd,' ');
-		PRINTENV(cmd);
+		cout << PRINTENV(cmd,fd) << endl;
 		*input = "";
 		return 1;
 	}else if(cmd == "setenv"){
 		string name,val;
 		getline(iss,name,' ');
 		getline(iss,val,' ');
-		SETENV(name,val);
+		SETENV(name,val,fd);
 		*input = "";
 		return 1;
 	}else if(cmd == "exit"){
@@ -428,14 +449,14 @@ int Shell::ParseCMD(vector<string> input,int fd){
 				close(pipe_vector[j].in);
 				close(pipe_vector[j].out);
 			}
-			EXECCMD(parm);
+			EXECCMD(parm,fd);
 		}	
 	}
 	//pipe_vector.clear();
 	return 0;
 }
 
-int Shell::EXECCMD(vector<string> parm){
+int Shell::EXECCMD(vector<string> parm,int client_fd){
 	int fd;
 	bool file_redirection = false;	
 	const char **argv = new const char* [parm.size()+1];
@@ -457,22 +478,21 @@ int Shell::EXECCMD(vector<string> parm){
 		}
 		close(fd);
 	}
+	clearenv();
+	setenv("PATH",PRINTENV("PATH",client_fd).c_str(),1);
 	if(execvp(parm[0].c_str(),(char **)argv) == -1){
 		//stderr for unknown command
 		if(parm[0] != "setenv" && parm[0] != "printenv" && parm[0] != "exit" &&
 		   parm[0] != "who" && parm[0] != "name" && parm[0] != "yell")
 			fprintf(stderr,"Unknown command: [%s].\n",parm[0].c_str());
 		exit(0);
-		//char *argv[] = {(char*)NULL};
-		//execv("./bin/noop", argv);
+		//seems useless
 		return -1;
 	}
 	return 0;
 }
 
 int Shell::EXEC(string input,int fd){
-	clearenv();
-	SETENV("PATH","bin:.");
 	if(input.empty() || isWhitespace(input)){
 		cout << "% ";
 		fflush(stdout);

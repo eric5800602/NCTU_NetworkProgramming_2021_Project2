@@ -3,6 +3,8 @@
 # Learn more about .gitignore:
 #     https://www.atlassian.com/git/tutorials/saving-changes/gitignore
 
+np_simple
+np_single_proc
 # Node artifact files
 node_modules/
 dist/

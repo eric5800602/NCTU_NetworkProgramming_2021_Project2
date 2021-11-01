@@ -71,15 +71,22 @@ int main(int argc, char *argv[])
             }
             FD_SET(ssock, &afds);
             /* send welcome msg */
+            /* client ip */
             char ip[INET6_ADDRSTRLEN];
             sprintf(ip, "%s:%d", inet_ntoa(fsin.sin_addr), ntohs(fsin.sin_port));
+            string tmp(ip);
             welcome(ssock);
             /* create user info */
-            string tmp(ip);
+            /* custome env information */
+            map<string, string> ev;
+            ev.clear();
+            ev["PATH"] = "bin:.";
+            /* custom number pipe vector */
             vector<npipe> np;
             np.clear();
-            client c = {ID, tmp, "no name", ssock,np};
+            client c = {ID, tmp, "no name", ssock,np,ev};
             client_info.push_back(c);
+            /* sort by client id */
             sort(client_info.begin(), client_info.end(), sortid);
             /* broadcast login information */
             broadcast(0, "", &c, 0);
