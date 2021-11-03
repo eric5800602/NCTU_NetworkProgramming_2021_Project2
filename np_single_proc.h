@@ -17,6 +17,8 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <map>
+#include <list>
+
 #define QLEN 5
 #define BUFSIZE 4096
 #define CLIENTMAX 30
@@ -48,6 +50,13 @@ struct client{
 	map<string, string> mapenv;
 };
 
+struct broadcast_order{
+	int type;
+	string msg;
+	client *cnt;
+	int tarfd;
+};
+
 /* used to store user information */
 vector<client> client_info;
 /* userd to store user pipe information */
@@ -71,7 +80,7 @@ int get_min_num(){
 void broadcast(int type,string msg,client *cnt,int tarfd){
 	int nfds = getdtablesize();
 	char buf[BUFSIZE];
-    bzero((char *)&buf, BUFSIZE);
+	memset( buf, 0, sizeof(char)*BUFSIZE );
 	client c = *cnt;
 	client *tar;
 	switch(type){
@@ -83,6 +92,10 @@ void broadcast(int type,string msg,client *cnt,int tarfd){
 			/* Change name */
 			if(tarfd == -1){
 				sprintf(buf,"*** User '%s' already exists. ***\n",msg.c_str());
+				string tmp(buf);
+				if(send(c.fd, tmp.c_str(), tmp.length(),0) < 0)
+					perror("change name unknown error");
+				return;
 			}else{
 				sprintf(buf,"*** User from %s is named '%s'. ***\n",c.ip.c_str(),msg.c_str());
 			}
@@ -95,11 +108,13 @@ void broadcast(int type,string msg,client *cnt,int tarfd){
 			/* Tell with msg and target */
 			if(tarfd == -1){
 				sprintf(buf,"*** Error: user #%s does not exist yet. ***\n",msg.c_str());
-				if(send(c.fd, buf, BUFSIZE,0) < 0)
+				string tmp(buf);
+				if(send(c.fd, tmp.c_str(), tmp.length(),0) < 0)
 					perror("Tell unknown error");
 			}else{
 				sprintf(buf,"*** %s told you ***: %s\n",c.nickname.c_str(),msg.c_str());
-				if(send(tarfd, buf, BUFSIZE,0) < 0)
+				string tmp(buf);
+				if(send(tarfd, tmp.c_str(), tmp.length(),0) < 0)
 					perror("Tell error");
 			}
 			break;
@@ -117,7 +132,7 @@ void broadcast(int type,string msg,client *cnt,int tarfd){
 					break;
 				}
 			}
-			sprintf(buf,"*** %s (#%d) just piped '%s' to <%s> (#%d) ***\n",
+			sprintf(buf,"*** %s (#%d) just piped '%s' to %s (#%d) ***\n",
 			c.nickname.c_str(),c.ID,msg.c_str(),tar->nickname.c_str(),tar->ID);
 			break;
 		case 6:
@@ -138,13 +153,14 @@ void broadcast(int type,string msg,client *cnt,int tarfd){
 			break;
 	}
 	/* Not tell msg */
+	string tmp(buf);
 	if(type != 3)
 		for (int fd = 0; fd < nfds; ++fd)
 		{
 			//send to all active fd
 			if (fd != msock && FD_ISSET(fd, &afds))
 			{
-				int cc = send(fd, buf, BUFSIZE,0);
+				int cc = write(fd, tmp.c_str(), tmp.length());
 			}
 		}
 }
@@ -177,6 +193,8 @@ class Shell
         vector<npipe> pipe_vector;
 		string original_input;
     public:
+		list<broadcast_order> fix_order;
+
         static void HandleChild(int);
         void SETENV(string, string,int);
         string PRINTENV(string,int);
@@ -241,16 +259,20 @@ void Shell::WHO(int fd){
 }
 
 void Shell::NAME(int fd,string name){
+	client tmp;
 	for(int i = 0;i < client_info.size();i++){
 		client *c = &client_info[i];
+		if(client_info[i].fd == fd) tmp = client_info[i];
 		if(c->nickname == name){
-			broadcast(1,name,c,-1);
-			return;
+			if(c->fd != fd){
+				broadcast(1,name,&tmp,-1);
+				return;
+			}
 		}
 	}
 	for(int i = 0;i < client_info.size();i++){
 		client *c = &client_info[i];
-		if(c->fd == fd){
+		if(c->fd == fd && c->nickname != name){
 			c->nickname = name;
 			broadcast(1,name,c,0);
 			break;
@@ -438,7 +460,8 @@ int Shell::ParseCMD(vector<string> input,int fd){
 							user_recv_idx = j;
 							up_vector[j].used = true;
 							has_user_recvpipe = true;
-							broadcast(6,original_input,c,send_id);
+							broadcast_order tbo = {6,original_input,c,send_id};
+							fix_order.push_front(tbo);
 							break;
 						}
 					}
@@ -483,12 +506,18 @@ int Shell::ParseCMD(vector<string> input,int fd){
 						up_vector.push_back(tmpuserpipe);
 						has_user_sendpipe = true;
 						/* broadcast msg */
-						broadcast(5,original_input,c,recv_id);
+						broadcast_order tbo = {5,original_input,c,recv_id};
+						fix_order.push_back(tbo);
 					}
 					continue;
 				}
 			}
 			parm.push_back(cmd);
+		}
+		while(!fix_order.empty()){
+			broadcast_order tbo = fix_order.front();
+			broadcast(tbo.type,tbo.msg,tbo.cnt,tbo.tarfd);
+			fix_order.pop_front();
 		}
 		if(err_recv_id != -1){
 			fprintf(stdout,"*** Error: user #%d does not exist yet. ***\n",err_recv_id);
@@ -598,20 +627,14 @@ int Shell::ParseCMD(vector<string> input,int fd){
 				close(c->numberpipe_vector[c->numberpipe_vector.size()-1].in);
 				close(c->numberpipe_vector[c->numberpipe_vector.size()-1].out);
 			}
-			for(int j = 0;j < pipe_vector.size();j++){
-				close(pipe_vector[j].in);
-				close(pipe_vector[j].out);
-			}
 			/* Process user pipe */
 			/* Recv */
 			if(has_user_recvpipe){
 				dup2(up_vector[user_recv_idx].in,STDIN_FILENO);
-				close(up_vector[user_recv_idx].in);
 			}
 			/* Send */
 			if(has_user_sendpipe){
 				dup2(up_vector[user_send_idx].out,STDOUT_FILENO);
-				close(up_vector[user_send_idx].out);
 			}
 			/* send to null*/
 			if(dup_userpipe){
@@ -630,6 +653,10 @@ int Shell::ParseCMD(vector<string> input,int fd){
 			for(int j = 0;j < up_vector.size();++j){
 				close(up_vector[j].in);
 				close(up_vector[j].out);
+			}
+			for(int j = 0;j < pipe_vector.size();j++){
+				close(pipe_vector[j].in);
+				close(pipe_vector[j].out);
 			}
 			EXECCMD(parm,fd);
 		}

@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
             /* custom number pipe vector */
             vector<npipe> np;
             np.clear();
-            client c = {ID, tmp, "no name", ssock,np,ev};
+            client c = {ID, tmp, "(no name)", ssock,np,ev};
             client_info.push_back(c);
             /* sort by client id */
             sort(client_info.begin(), client_info.end(), sortid);
@@ -126,19 +126,19 @@ int main(int argc, char *argv[])
 
 void welcome(int fd)
 {
-    char buf[BUFSIZE] =
-        "***************************************\n\
-** Welcome to the information server **\n\
-***************************************\n";
+    string buf =
+        "****************************************\n\
+** Welcome to the information server. **\n\
+****************************************\n";
     int cc;
-    cc = send(fd, buf, BUFSIZE, 0);
+    cc = send(fd, buf.c_str(), buf.length(), 0);
     return;
 }
 
 int openshell(int fd)
 {
     char buf[BUFSIZE];
-    bzero((char *)buf, BUFSIZE);
+    memset( buf, 0, sizeof(char)*BUFSIZE );
     int cc;
     cc = recv(fd, buf, BUFSIZE, 0);
     if (cc == 0){
@@ -154,6 +154,7 @@ int openshell(int fd)
     dup2(fd, STDOUT_FILENO);
     dup2(fd, STDERR_FILENO);
     Shell s;
+    s.fix_order.clear();
     int status = s.EXEC(input, fd);
     send(fd, "% ", 2,0);
     return status;

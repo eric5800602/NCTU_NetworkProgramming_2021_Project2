@@ -7,13 +7,12 @@
 
 #include "npshell.h"
 
-#define PORT 7979
-
 using namespace std;
 
 int main(int argc,char const *argv[]){
 	int server_fd, child_socket;
 	struct sockaddr_in address;
+	int port = atoi(argv[1]);
 	// Create socket of server
 	if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) <= 0)
 	{
@@ -25,7 +24,7 @@ int main(int argc,char const *argv[]){
 	//set address env
 	address.sin_family = AF_INET;
 	address.sin_addr.s_addr = INADDR_ANY;
-	address.sin_port = htons(PORT);
+	address.sin_port = htons(port);
 	//bind
 	if (bind(server_fd, (struct sockaddr *)&address,sizeof(address))<0)
 	{
