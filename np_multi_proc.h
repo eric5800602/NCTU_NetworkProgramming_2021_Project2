@@ -1,7 +1,9 @@
 #include <iostream>
 #include <stdio.h>
 #include <cstdlib>
+#include <stdlib.h>
 #include <string>
+#include <cstring>
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sstream>
@@ -9,6 +11,16 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <algorithm>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/time.h>
+#include <sys/mman.h>
+#include <map>
+
+#define CLIENTMAX 30
+#define BUFSIZE 4096
 
 using namespace std;
 
@@ -17,6 +29,86 @@ struct npipe{
 	int out;
 	int num;
 };
+
+struct client{
+	bool valid;
+    int ID;
+    char ip[INET6_ADDRSTRLEN];
+    char nickname[20];
+	int cpid;
+};
+
+int ID_arr[CLIENTMAX];
+int shared_mem_fd;
+int info_shared_fd;
+int server_pid;
+/* used to store user information */
+vector<client> client_info;
+/* Get  minimum number of client */
+int get_min_num(){
+	client *c =  (client *)mmap(NULL, sizeof(client) * CLIENTMAX, PROT_READ, MAP_SHARED, info_shared_fd, 0);
+	for(int i = 0;i < CLIENTMAX;++i){
+		if(!c[i].valid) return i+1;
+	}
+	return -1;
+}
+
+/* broadcast method with shared memory */
+void broadcast(int type,string msg,int ID,int tarfd){
+	char buf[BUFSIZE];
+	memset( buf, 0, sizeof(char)*BUFSIZE );
+	client *c =  (client *)mmap(NULL, sizeof(client) * CLIENTMAX, PROT_READ, MAP_SHARED, info_shared_fd, 0);
+	switch(type){
+		case 0:
+			/* Login */
+			sprintf(buf, "*** User '(no name)' entered from %s. ***", c[ID-1].ip);
+			break;
+		case 1:
+			/* Change name */
+			if(tarfd == -1){
+				sprintf(buf,"*** User '%s' already exists. ***",msg.c_str());
+				string tmpstring(buf);
+				cout << tmpstring << endl;
+				munmap(c, sizeof(client) * CLIENTMAX);
+				return;
+			}else{
+				sprintf(buf,"*** User from %s is named '%s'. ***",c[ID-1].ip,msg.c_str());
+			}
+			break;
+		case 4:
+			/* Logout */
+			sprintf(buf,"*** User '%s' left. ***",c[ID-1].nickname);
+			break;
+		default:
+			perror("unknown brroadcast type");
+			break;
+	}
+	char *p = static_cast<char*>(mmap(NULL, 0x400000, PROT_READ | PROT_WRITE, MAP_SHARED, shared_mem_fd, 0));
+	string tmpstring(buf);
+	/* end of string */
+	tmpstring += '\0';
+	strncpy(p, tmpstring.c_str(),tmpstring.length());
+	munmap(p, 0x400000);
+	for(int i = 0;i < CLIENTMAX;++i){
+		/* check id valid */
+		if(c[i].valid == true){
+			kill(c[i].cpid,SIGUSR1);
+		}
+	}
+	munmap(c, sizeof(client) * CLIENTMAX);
+}
+
+static void SIGHANDLE(int sig){
+	/* receive msg from broadfcast */
+	if (sig == SIGUSR1)
+    {
+		char *p = static_cast<char*>(mmap(NULL, 0x400000, PROT_READ, MAP_SHARED, shared_mem_fd, 0));
+		string tmpstring(p);
+		cout << tmpstring << endl;
+		munmap(p, 0x400000);
+	}
+	signal(sig, SIGHANDLE);
+}
 
 class Shell
 {
@@ -30,13 +122,15 @@ class Shell
         static void HandleChild(int);
         void SETENV(string, string);
         void PRINTENV(string);
-        bool CheckBuiltIn(string);
-        int CheckPIPE(string);
+		void WHO();
+		void NAME(string,int);
+        int CheckBuiltIn(string *,int);
+        int CheckPIPE(string,int);
         void CreatePipe(int,int,int);
         bool isWhitespace(string);
         int ParseCMD(vector<string>);
         int EXECCMD(vector<string>);
-        int EXEC();
+        int EXEC(int);
 };
 
 void Shell::HandleChild(int sig){
@@ -54,38 +148,101 @@ void Shell::PRINTENV(string name){
 	if(val) cout << val << endl;
 }
 
-bool Shell::CheckBuiltIn(string input){
-	istringstream iss(input);
+void Shell::WHO(){
+	printf("<ID>\t<nickname>\t<IP:port>\t<indicate me>\n");
+	client *c =  (client *)mmap(NULL, sizeof(client) * CLIENTMAX, PROT_READ, MAP_SHARED, info_shared_fd, 0);
+	for(int i = 0;i < CLIENTMAX;i++){
+		if(c[i].valid == true){
+			if(c[i].cpid == getpid()){
+				printf("%d\t%s\t%s\t<-me\n",i+1,c[i].nickname,c[i].ip);
+			}
+			else
+			{
+				printf("%d\t%s\t%s\t\n",i+1,c[i].nickname,c[i].ip);
+			}
+		}
+	}
+	fflush(stdout);
+	munmap(c, sizeof(client) * CLIENTMAX);
+}
+
+void Shell::NAME(string name,int ID){
+	client *c =  (client *)mmap(NULL, sizeof(client) * CLIENTMAX, PROT_READ| PROT_WRITE, MAP_SHARED, info_shared_fd, 0);
+	for(int i = 0;i < CLIENTMAX;i++){
+		if(c[i].valid == true && c[i].nickname == name){
+			if(c[i].cpid != getpid()){
+				broadcast(1,name,ID,-1);
+				return;
+			}
+		}
+	}
+	name += '\0';
+	strncpy(c[ID-1].nickname,name.c_str(),name.length());
+	broadcast(1,name,ID,0);
+	munmap(c, sizeof(client) * CLIENTMAX);
+}
+
+int Shell::CheckBuiltIn(string *input,int ID){
+	istringstream iss(*input);
 	string cmd;
 	getline(iss,cmd,' ');
 	if(cmd == "printenv"){
-		getline(iss,cmd,' ');
+		getline(iss,cmd);
 		PRINTENV(cmd);
-		return true;
+		*input = "";
+		return 1;
 	}else if(cmd == "setenv"){
 		string name,val;
 		getline(iss,name,' ');
-		getline(iss,val,' ');
+		getline(iss,val);
 		SETENV(name,val);
-		return true;
+		*input = "";
+		return 1;
 	}else if(cmd == "exit"){
-		exit(0);
-		return true;
+		*input = "";
+		return -1;
 	}
-	return false;
+	else if(cmd == "who"){
+		WHO();
+		*input = "";
+		return 1;
+	}else if(cmd == "name"){
+		string name;
+		getline(iss,name,' ');
+		NAME(name,ID);
+		*input = "";
+		return 1;
+	}/*else if(cmd == "yell"){
+		string msg;
+		getline(iss,msg);
+		YELL(fd,msg);
+		*input = "";
+		return 1;
+	}else if(cmd == "tell"){
+		string msg,tmp;
+		getline(iss,tmp,' ');
+		getline(iss,msg);
+		//cerr << stoi(tmp) << endl;
+		TELL(fd,msg,stoi(tmp));
+		*input = "";
+	}
+	*/
+	return 0;
 }
 
-int Shell::CheckPIPE(string input){
+int Shell::CheckPIPE(string input,int ID){
 	vector<string> cmds;
 	string delim = " | ";
 	size_t pos = 0;
+	bool exit_sig = false;
 	while((pos = input.find(delim)) != string::npos){
 		cmds.push_back(input.substr(0,pos));
 		input.erase(0,pos + delim.length());
 	}
-	CheckBuiltIn(input);
+	if(CheckBuiltIn(&input,ID) == -1) exit_sig = true;
 	cmds.push_back(input);
 	ParseCMD(cmds);
+	if(exit_sig) return -1;
 	return 0;
 }
 
@@ -292,7 +449,8 @@ int Shell::EXECCMD(vector<string> parm){
 	return 0;
 }
 
-int Shell::EXEC(){
+int Shell::EXEC(int ID){
+	
 	clearenv();
 	SETENV("PATH","bin:.");
 	while(1){
@@ -308,8 +466,8 @@ int Shell::EXEC(){
 		if(input.empty() || isWhitespace(input)) continue;
 		input.erase(remove(input.begin(), input.end(), '\n'),input.end());
 		input.erase(remove(input.begin(), input.end(), '\r'),input.end());
-		if(CheckPIPE(input)  == -1){
-			return 0;
+		if(CheckPIPE(input,ID)  == -1){
+			return -1;
 		}
 	}
 	return 0;

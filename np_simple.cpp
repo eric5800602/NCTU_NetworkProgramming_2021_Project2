@@ -42,10 +42,10 @@ int main(int argc,char const *argv[]){
 	int addrlen = sizeof(child_addr);
 	while(1){
 		child_socket = accept(server_fd,(struct sockaddr *)&child_addr,(socklen_t*)&addrlen);
-			if(child_socket < 0){
-				perror("accept failed");
-				exit(EXIT_FAILURE);
-			}
+		if(child_socket < 0){
+			perror("accept failed");
+			exit(EXIT_FAILURE);
+		}
 		int cpid = fork();
 		while(cpid < 0){
 			//fork error
