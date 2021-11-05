@@ -40,12 +40,32 @@ void init_info_shared_memory(){
 	munmap(c, sizeof(client) * CLIENTMAX);
 }
 
+void init_FIFO_shared_memory(){
+	/* shared memory store client info */
+	userpipe_shared = shm_open("used_to_store_userpipe", O_CREAT | O_RDWR, 0666);
+	ftruncate(userpipe_shared, sizeof(fifo_info));
+	fifo_info* f =  (fifo_info *)mmap(NULL, sizeof(fifo_info) , PROT_READ | PROT_WRITE, MAP_SHARED, userpipe_shared, 0);
+	for(int i = 0;i < CLIENTMAX;++i){
+		for(int j = 0;j < CLIENTMAX;++j){
+			f->fifolist[i][j].used = false;
+			f->fifolist[i][j].in = -1;
+			f->fifolist[i][j].out = -1;
+			memset(&f->fifolist[i][j].name,0,sizeof(f->fifolist[i][j].name));
+		}
+	}
+	munmap(f,  sizeof(fifo_info));
+}
+
 int main(int argc,char const *argv[]){
+	/* Initiallize user pipe folder */
+	if(NULL==opendir(PIPE_PATH))
+   		mkdir(PIPE_PATH,0777);
 	/* Open shared memory */
 	server_pid = getpid();
 	shared_mem_fd = shm_open("used_to_broadcast", O_CREAT | O_RDWR, 0666);
 	ftruncate(shared_mem_fd, 0x400000);
 	init_info_shared_memory();
+	init_FIFO_shared_memory();
 	/* socket setting */
 	int server_fd, child_socket;
 	struct sockaddr_in address;
@@ -127,6 +147,7 @@ int main(int argc,char const *argv[]){
 			munmap(p, sizeof(client) * CLIENTMAX);
 			/* Set signals for boradcast msg */
 			signal(SIGUSR1, SIGHANDLE);
+			signal(SIGUSR2, SIGHANDLE);
 			/* Set signals for client */
 			signal(SIGINT, SIGHANDLE);
 			signal(SIGQUIT, SIGHANDLE);
@@ -144,6 +165,7 @@ int main(int argc,char const *argv[]){
 				client *c =  (client *)mmap(NULL, sizeof(client) * CLIENTMAX, PROT_READ | PROT_WRITE, MAP_SHARED, info_shared_fd, 0);
 				c[ID-1].valid = false;
 				broadcast(4,"",ID,0);
+				EraseUserPipe(ID);
 				munmap(c, sizeof(client) * CLIENTMAX);
                 exit(0);
 			}

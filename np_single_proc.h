@@ -347,6 +347,7 @@ int Shell::CheckBuiltIn(string *input,int fd){
 		//cerr << stoi(tmp) << endl;
 		TELL(fd,msg,stoi(tmp));
 		*input = "";
+		return 1;
 	}
 	return 0;
 }
@@ -661,7 +662,7 @@ int Shell::ParseCMD(vector<string> input,int fd){
 			EXECCMD(parm,fd);
 		}
 	}
-	//pipe_vector.clear();
+	pipe_vector.clear();
 	return 0;
 }
 
