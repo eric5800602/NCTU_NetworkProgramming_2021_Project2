@@ -19,6 +19,12 @@ int main(int argc,char const *argv[]){
 		perror("socket failed");
 		exit(EXIT_FAILURE);
 	}
+	int optval = 1;
+	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(int)) == -1) 
+    {
+		perror("Error: set socket failed");
+		return 0;
+	}
 	//reset server socket memory
 	bzero((char *) &address, sizeof(address));
 	//set address env

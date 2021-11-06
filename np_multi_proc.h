@@ -141,6 +141,7 @@ void broadcast(int type,string msg,int ID,int tarfd){
 	tmpstring += '\0';
 	strncpy(p, tmpstring.c_str(),tmpstring.length());
 	munmap(p, 0x400000);
+	usleep(50);
 	if(type != 3){
 		for(int i = 0;i < CLIENTMAX;++i){
 			/* check id valid */
@@ -481,7 +482,7 @@ int Shell::ParseCMD(vector<string> input,int ID){
 				has_numberpipe = true;
 				continue;
 			}
-			/* check user pipe (receive) exclude file redirection */
+			/* check user pipe (receive<) exclude file redirection */
 			if((pos = cmd.find(user_recvpipe_delim)) != string::npos){
 				if(cmd.size() != 1){
 					int send_id = atoi(cmd.erase(0,pos+user_recvpipe_delim.length()).c_str());
@@ -516,7 +517,7 @@ int Shell::ParseCMD(vector<string> input,int ID){
 					continue;
 				}
 			}
-			/* check user pipe (send) exclude file redirection */
+			/* check user pipe (send>) exclude file redirection */
 			if((pos = cmd.find(user_sendpipe_delim)) != string::npos){
 				/* exclude file redirection */
 				if(cmd.size() != 1){
@@ -548,6 +549,7 @@ int Shell::ParseCMD(vector<string> input,int ID){
 						fifo_info* f =  (fifo_info *)mmap(NULL, sizeof(fifo_info) , PROT_READ | PROT_WRITE, MAP_SHARED, userpipe_shared, 0);
 						/* Copy filename and open input fd */
 						strncpy(f->fifolist[ID-1][recv_id-1].name,send_fifo_name,PATHMAX);
+						//usleep(50);
 						kill(c[recv_id-1].cpid,SIGUSR2);
 						f->fifolist[ID-1][recv_id-1].out = open(send_fifo_name,O_WRONLY);
 						//cout <<getpid() << " open out" << f->fifolist[ID-1][recv_id-1].out << endl;
@@ -568,6 +570,7 @@ int Shell::ParseCMD(vector<string> input,int ID){
 			broadcast_order tbo = fix_order.front();
 			broadcast(tbo.type,tbo.msg,tbo.ID,tbo.tarfd);
 			fix_order.pop_front();
+			usleep(50);
 		}
 		if(err_recv_id != -1){
 			fprintf(stdout,"*** Error: user #%d does not exist yet. ***\n",err_recv_id);
@@ -682,6 +685,7 @@ int Shell::ParseCMD(vector<string> input,int ID){
 			if(has_user_recvpipe){
 				fifo_info* f =  (fifo_info *)mmap(NULL, sizeof(fifo_info) , PROT_READ | PROT_WRITE, MAP_SHARED, userpipe_shared, 0);
 				/* dup2 input fd */
+				usleep(50);
 				dup2(f->fifolist[user_send_idx-1][ID-1].in,STDIN_FILENO);
 				//cerr <<getpid() << " open "<< f->fifolist[user_send_idx-1][ID-1].in << endl;
 				f->fifolist[user_send_idx-1][ID-1].used = true;
