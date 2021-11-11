@@ -570,7 +570,7 @@ int Shell::ParseCMD(vector<string> input,int fd){
 					up_vector.erase(up_vector.begin()+j);
 				}
 			}
-			if(i == input.size()-1 && !(has_numberpipe || has_errpipe )){
+			if(i == input.size()-1 && !(has_numberpipe || has_errpipe) && !has_user_sendpipe){
 				waitpid(cpid,&status,0);
 			}
 		}

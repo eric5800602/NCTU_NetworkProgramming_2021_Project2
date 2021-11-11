@@ -614,7 +614,7 @@ int Shell::ParseCMD(vector<string> input,int ID){
 					j--;
 				}
 			}
-			if(i == input.size()-1 && !(has_numberpipe || has_errpipe)){
+			if(i == input.size()-1 && !(has_numberpipe || has_errpipe) && !has_user_sendpipe){
 				waitpid(cpid,&status,0);
 			}
 			ClearUserPipe();
