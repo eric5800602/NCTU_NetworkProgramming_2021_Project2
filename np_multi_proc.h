@@ -171,12 +171,14 @@ static void SIGHANDLE(int sig){
 			if(f->fifolist[client_id-1][i].used){
 				close(f->fifolist[client_id-1][i].out);
 				memset(&f->fifolist[client_id-1][i].name, 0, sizeof(f->fifolist[client_id-1][i].name));
+				f->fifolist[client_id-1][i].out = -1;
 				f->fifolist[client_id-1][i].used = false;
 				//cerr << getpid()<< " close out " << f->fifolist[client_id-1][i].out << endl;
 			}
 			if(f->fifolist[i][client_id-1].used){
 				f->fifolist[i][client_id-1].used = false;
 				memset(&f->fifolist[i][client_id-1].name, 0, sizeof(f->fifolist[i][client_id-1].name));
+				f->fifolist[i][client_id-1].in = -1;
 				close(f->fifolist[i][client_id-1].in);
 				//cerr << getpid()<< " close in " << f->fifolist[i][client_id-1].in << endl;
 			}
@@ -404,7 +406,6 @@ void Shell::ClearUserPipe(){
 	for(int id = 0;id < CLIENTMAX;++id){
 		if(f->fifolist[id][client_id-1].used == true){
 			close(f->fifolist[id][client_id-1].in);
-			close(f->fifolist[id][client_id-1].out);
 			f->fifolist[id][client_id-1].in = -1;
 			f->fifolist[id][client_id-1].out = -1;
 			f->fifolist[id][client_id-1].used = false;
@@ -412,7 +413,6 @@ void Shell::ClearUserPipe(){
 			memset(&f->fifolist[id][client_id-1].name, 0, sizeof(f->fifolist[id-1][client_id-1].name));
 		}
 		if(f->fifolist[client_id-1][id].used == true){
-			close(f->fifolist[client_id-1][id].in);
 			close(f->fifolist[client_id-1][id].out);
 			f->fifolist[client_id-1][id].in = -1;
 			f->fifolist[client_id-1][id].out = -1;
