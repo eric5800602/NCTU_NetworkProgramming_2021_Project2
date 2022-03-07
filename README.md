@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # README #
 
 This README would normally document whatever steps are necessary to get your application up and running.
@@ -27,3 +28,6 @@ This README would normally document whatever steps are necessary to get your app
 
 * Repo owner or admin
 * Other community or team contact
+=======
+# NCTU_NetwrokProgramming_2021_Project2
+>>>>>>> b8a315caa9e4974d26f3c3a629b487d6bdfbcd84
